@@ -1,0 +1,23 @@
+{
+  "name": "shopify-serverless-auth",
+  "version": "0.0.1",
+  "description": "Serverless AWS module for Shopify auth",
+  "main": "handler.js",
+  "dependencies": {
+    "oauth": "0.9.15"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/udundi/shopify-serverless-auth.git"
+  },
+  "author": "Andrew Templeton",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/udundi/shopify-serverless-auth/issues"
+  },
+  "homepage": "https://github.com/udundi/shopify-serverless-auth#readme"
+}
