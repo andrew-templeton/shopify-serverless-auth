@@ -1,6 +1,6 @@
 {
   "name": "shopify-serverless-auth",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Serverless AWS module for Shopify auth",
   "main": "handler.js",
   "dependencies": {
