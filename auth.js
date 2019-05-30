@@ -1,144 +1,76 @@
-'use strict';
 
-const OAuth = require('oauth').OAuth2
-const url = require('url')
+const Crypto = require('crypto')
+const { OAuth } = require('oauth')
+const Qs = require('qs')
+const Url = require('url')
+const Util = require('util')
 
-const POST_AUTH_REDIRECT = process.env.POST_AUTH_REDIRECT
-const SHOPIFY_API_KEY = process.env.SHOPIFY_API_KEY
-const SHOPIFY_API_SECRET = process.env.SHOPIFY_API_SECRET
+const { POST_AUTH_REDIRECT, SHOPIFY_API_KEY, SHOPIFY_API_SECRET } = process.env
 
+const scope = 'write_content, read_themes, write_themes, read_script_tags, write_script_tags, write_products'
 
-module.exports.init = (event, context, callback) => {
-
-  console.log('Got event: %j', event)
-
-  const host = event.headers.Host
-  const shopUri = event.queryStringParameters.shop
-  const stage = event.requestContext.stage
-
-  const redirectURI = _OAuth('https://' + shopUri).getAuthorizeUrl({
-    redirect_uri: [
-      'https:/',
-      host,
-      stage,
-      'auth/token'
-    ].join('/'),
-    scope: [
-      'write_content',
-      'read_themes',
-      'write_themes',
-      'read_script_tags',
-      'write_script_tags',
-      'write_products'
-    ].join(', ')
+const getOAuthAccessToken = Util.promisify(function getOAuthAccessToken (shop, code, callback) {
+  return _OAuth(shop).getOAuthAccessToken(code, {}, (err, accessToken, refreshToken) => {
+    return callback(err, { accessToken, refreshToken })
   })
+})
 
-  console.log('redirectURI: %s', redirectURI);
+module.exports.init = hmacChecked(async ({ headers:{ Host }, queryStringParameters, requestContext:{ stage } }) => {
+  const { shop } = queryStringParameters
+  return redirect(_OAuth(shop).getAuthorizeUrl({ redirect_uri: `https://${Host}/${stage}/auth/token`, scope }))
+})
 
-  const response = {
-    statusCode: 302,
-    headers: {
-      'Content-Type': 'text/html',
-      'Location': redirectURI
-    }
-  }
+module.exports.token = hmacChecked(async ({ queryStringParameters, headers: { Host }, requestContext: { stage } }) => {
+  const { code, shop } = queryStringParameters
+  const { accessToken, refreshToken } = await getOAuthAccessToken(shop, code)
+  return redirect((POST_AUTH_REDIRECT || `https://${Host}/${stage}/test`) + Qs.stringify({ accessToken, shop }))
+})
 
-  callback(null, response);
-}
-
-
-
-module.exports.token = (event, context, callback) => {
-
-  console.log('Got event: %j', event)
-
-  const code = event.queryStringParameters.code
-  const host = event.headers.Host
-  const shopUri = event.queryStringParameters.shop
-  const stage = event.requestContext.stage
-
-  console.log('Got token for shop: %s', shopUri)
-
-  _OAuth('https://' + shopUri).getOAuthAccessToken(
-    code,
-    {},
-    function(err, accessToken, refreshToken) {
-      if (err) {
-        console.error('OAuth access token generation error: %j', err)
-        return callback(null, {
-          statusCode: 500
-        })
-      } else {
-        const redirectQueryParams = '?accessToken=' + accessToken + '&shopUrl=' + shopUri
-        console.log('Built access token: %s', accessToken)
-        const redirectURI = (POST_AUTH_REDIRECT || [
-          'https:/',
-          host,
-          stage,
-          'test'
-        ].join('/')) + redirectQueryParams
-        console.log('RedirectURI: %s', redirectURI)
-        const response = {
-          statusCode: 302,
-          headers: {
-            'Content-Type': 'text/html',
-            'Location': redirectURI
-          }
-        }
-        callback(null, response)
-      }
-    }
-  )
-
-}
-
-
-
-module.exports.page = (event, context, callback) => {
-
-  console.log('Got event: %j', event)
-
-  const accessToken = event.queryStringParameters.accessToken
-  const shopHost = event.queryStringParameters.shopUrl
-  
-  callback(null, {
+module.exports.page = async ({ queryStringParameters:{ shop, accessToken } }) => {
+  return {
     statusCode: 200,
     headers: {
       'Content-Type': 'text/html'
     },
-    body: [
-      '<html>',
-      '  <head>',
-      '    <script src="https://cdn.shopify.com/s/assets/external/app.js"></script>',
-      '    <script>',
-      '      ShopifyApp.init({',
-      '        apiKey: "' + SHOPIFY_API_KEY + '",',
-      '        shopOrigin: "https://' + shopHost + '",',
-      '        debug: true',
-      '      });',
-      '      ShopifyApp.flashNotice("You are using the shopify-serverless-auth ' +
-      'default page. You can set what page to redirect to by setting the ' +
-      'POST_AUTH_REDIRECT environment variable in the serverless.yml file.");',
-      '    </script>',
-      '  </head>',
-      '  <body>',
-      '    <p>Hello, world!</p>',
-      '    <p>Token: <pre>' + accessToken + '</pre></p>',
-      '  </body>',
-      '</html>'
-    ].join('\n')
-  })
-
+    body: `<html>
+      <head>
+        <script src="https://cdn.shopify.com/s/assets/external/app.js"></script>
+        <script>
+          ShopifyApp.init({
+            apiKey: '${SHOPIFY_API_KEY}',
+            shopOrigin: 'https://${shop}',
+            debug: true
+          });
+          ShopifyApp.flashNotice('You are using the shopify-serverless-auth default page. You can set what page to redirect to by setting the POST_AUTH_REDIRECT environment variable in the serverless.yml file.'');
+        </script>
+      </head>
+      <body>
+        <p>Hello world!</p>
+        <p>Token: <pre>${accessToken}</pre></p>
+      </body>
+    </html>`
+  }
 }
 
+function redirect (uri) {
+  return {
+    statusCode: 302,
+    headers: {
+      'Content-Type': 'text/html',
+      'Location': uri
+    }
+  }
+}
 
+function hmacChecked (asyncFunctor) {
+  return async ({ queryStringParameters, queryStringParameters:{ hmac }, headers, requestContext }) => {
+    delete queryStringParameters.hmac
+    return Crypto.createHmac('sha256', SHOPIFY_API_SECRET).update(Qs.stringify(queryStringParameters)).digest('hex') !== hmac
+      ? { statusCode: 500 }
+      : await asyncFunctor({ queryStringParameters, headers, requestContext })
+  }
+}
 
-function _OAuth(shopUri) {
-  return new OAuth(
-    SHOPIFY_API_KEY,
-    SHOPIFY_API_SECRET,
-    shopUri,
-    '/admin/oauth/authorize',
-    '/admin/oauth/access_token'
-  );
+function _OAuth(origin) {
+  return new OAuth(SHOPIFY_API_KEY, SHOPIFY_API_SECRET, origin, '/admin/oauth/authorize', '/admin/oauth/access_token')
 }
