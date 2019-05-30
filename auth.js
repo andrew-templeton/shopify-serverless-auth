@@ -1,7 +1,7 @@
 
 const Crypto = require('crypto')
 const { OAuth } = require('oauth')
-const Qs = require('qs')
+const Qs = require('querystring')
 const Url = require('url')
 const Util = require('util')
 
